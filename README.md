@@ -6,6 +6,8 @@ This is an example of getting web cam feed and send it to server in binary forma
 
 This can be used for live streaming, KYC verifications by recording the user video.
 
+Open index.html and app.js to see the code, rest are libraries
+
 Modules that are used:
 
 1) RTMP NGINX MODULE if required for recording and live streaming
