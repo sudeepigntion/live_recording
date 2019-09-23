@@ -1,0 +1,219 @@
+<html>
+    <head>
+        <title>Pounze Live Streaming Recording Server</title>
+
+        <style>
+            canvas {
+                position: absolute;
+                top:26px;
+                left:9px;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <div>Pounze Live Streaming Recording Server</div>
+
+        <div id="parent" style="height:400px;width:500px;">
+            <video id="video" width="500" height="400" autoplay=true muted controls></video>
+        </div>
+	
+        <script src="js/socket-client.js"></script>
+
+        <script src="https://code.jquery.com/jquery-1.11.1.js"></script>
+
+        <script src="face-api.min.js"></script>
+
+        <script>
+            
+            var mediaRecorder;
+            var socket = io();
+
+            var streamStarted = false;
+
+            var video = document.getElementById("video");
+
+            var currentTime = new Date().getTime();
+
+            Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+                faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+                faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+                faceapi.nets.faceExpressionNet.loadFromUri('/models')
+            ]).then(requestMedia);
+            
+            function connect_server()
+            {
+                navigator.getUserMedia = (navigator.getUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia || navigator.webkitGetUserMedia);
+                if(!navigator.getUserMedia)
+                {
+                    alert('No getUserMedia() available, please install latest version of google chrome');
+                    return;
+                }
+
+                if(!MediaRecorder){
+                    alert('No MediaRecorder available, please install latest version of google chrome');
+                    return;
+                }
+                
+                socket.emit('sendMessage', "Hello Sudeep");
+
+                socket.on('sendMessage', function(msg)
+                {
+                    console.log(msg);
+                });
+
+                // socket = io.connect(socketio_address.value, {secure: true});
+
+                socket.on('connect_error', function()
+                { 
+                    alert("Failed to connect to server");
+                });
+
+                socket.on('message',function(m)
+                {
+                    console.log('recv server message',m);
+                });
+
+                socket.on('fatal',function(m)
+                {
+                    console.log('ERROR: unexpected:'+m);
+                    mediaRecorder.stop();
+                });
+
+                socket.on('ffmpeg_stderr',function(m)
+                {
+                    console.log('FFMPEG:'+m);
+                });
+
+                socket.on('disconnect', function ()
+                {
+                    console.log('ERROR: server disconnected!');
+                    mediaRecorder.stop();
+                });
+            }
+
+            function video_show(stream)
+            {
+                if ("srcObject" in video)
+                {
+                    video.srcObject = stream;
+                }
+                else
+                {
+                    video.src = window.URL.createObjectURL(stream);
+                }
+
+                video.addEventListener("play", function ()
+                {
+                    const canvas = faceapi.createCanvasFromMedia(video);
+
+                    document.getElementById("parent").append(canvas);
+
+                    const displaySize = { width: video.width, height: video.height };
+
+                    faceapi.matchDimensions(canvas, displaySize);
+
+                    setInterval(async () =>{
+
+                        const detections = await faceapi.detectAllFaces(video,
+                        new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceExpressions()
+
+                        if(detections.length > 1)
+                        {
+                            if(streamStarted === true)
+                            {
+                                mediaRecorder.stop();
+                                streamStarted = false;
+                                alert("More than 1 face detected, stopping the stream.");
+                                return;
+                            }
+                        }
+                        if(detections.length === 0)
+                        {
+                            var newDateTime = new Date().getTime();
+
+                            var diff = (newDateTime - currentTime) / 1000;
+
+                            if(diff < 10)
+                            {
+                                return;
+                            }
+
+                            if(streamStarted === true)
+                            {
+                                mediaRecorder.stop();
+                                streamStarted = false;
+                                alert("No face detected, stopping the stream.");
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            currentTime = new Date().getTime();
+
+                            if(streamStarted === false)
+                            {
+                                if(mediaRecorder.state !== "recording")
+                                {
+                                    mediaRecorder.start(0);
+                                }
+                                
+                                streamStarted = true;
+                            }
+                        }
+                    
+                        const resizedDetections = faceapi.resizeResults(detections, displaySize)
+                        
+                        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+
+                        faceapi.draw.drawDetections(canvas, resizedDetections);
+
+                        // faceapi.draw.drawFaceLandmarks(canvas, resizedDetections);
+
+                        // faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
+                    }, 100);
+                });
+            }
+
+            function requestMedia()
+            {
+                var constraints = { audio: true,
+                    video:{
+                        width: { min: 500, ideal: 500, max: 500 },
+                        height: { min: 400, ideal: 400, max: 400 },
+                    }
+                };
+
+                navigator.mediaDevices.getUserMedia(constraints).then(function(stream)
+                {
+                    video_show(stream);
+                    
+                    socket.emit('config_rtmpDestination',"rtmp://127.0.0.1/live");
+                    socket.emit('start','start');
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start(0);
+
+                    mediaRecorder.onstop = function(e)
+                    {
+                               
+                    }
+
+                    mediaRecorder.ondataavailable = function(e)
+                    {
+                        if(streamStarted)
+                        {
+                            socket.emit("binarystream",e.data);
+                        }
+                    }
+                }).catch(function(err)
+                {
+                    console.log('The following error occured: ' + err);
+                });
+            }
+
+        </script>
+        
+    </body>
+</html>
